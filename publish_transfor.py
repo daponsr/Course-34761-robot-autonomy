@@ -4,13 +4,14 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import tf2_ros
 import math
+import time
 
 class TransformPublisher(Node):
     def __init__(self):
         super().__init__('transform_publisher')
         self.br = tf2_ros.TransformBroadcaster(self)
         self.odom_publisher = self.create_publisher(Odometry, 'my_odom', 10)
-        self.timer = self.create_timer(0.1, self.timer_callback)
+        self.timer = self.create_timer(1, self.timer_callback)
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
@@ -23,7 +24,7 @@ class TransformPublisher(Node):
         self.y = msg.pose.pose.position.y
         orientation = msg.pose.pose.orientation
         _, _, self.yaw = self.quaternion_to_euler(orientation.x, orientation.y, orientation.z, orientation.w)
-        print(f"Received odom data: x={self.x}, y={self.y}, yaw={self.yaw}")
+        print(f"Received odom data: x={self.x:2.2f}, y={self.y:2.2f}, yaw={self.yaw:2.2f}")
 
     def quaternion_to_euler(self, x, y, z, w):
         t0 = +2.0 * (w * x + y * z)
@@ -59,7 +60,7 @@ class TransformPublisher(Node):
         t.transform.rotation.z = q[2]
         t.transform.rotation.w = q[3]
         self.br.sendTransform(t)
-        print(f"Published transform: {t}")
+        print(f"Published TransformStamped: x={self.x:2.2f}, y={self.y:2.2f}, yaw={self.yaw:2.2f}")
 
         # Publish the odometry message
         odom_msg = Odometry()
@@ -74,7 +75,8 @@ class TransformPublisher(Node):
         odom_msg.pose.pose.orientation.z = q[2]
         odom_msg.pose.pose.orientation.w = q[3]
         self.odom_publisher.publish(odom_msg)
-        print(f"Published odometry: {odom_msg}")
+
+        print(f"Published Odometry: x={q[0]:2.2f}, y={q[1]:2.2f}, yaw={q[3]:2.2f}")
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
