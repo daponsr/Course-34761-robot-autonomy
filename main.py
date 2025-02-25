@@ -9,6 +9,7 @@ class TransformPublisher(Node):
     def __init__(self):
         super().__init__('transform_publisher')
         self.br = tf2_ros.TransformBroadcaster(self)
+        self.odom_publisher = self.create_publisher(Odometry, 'my_odom', 10)
         self.timer = self.create_timer(0.1, self.timer_callback)
         self.x = 0.0
         self.y = 0.0
@@ -41,24 +42,39 @@ class TransformPublisher(Node):
         return roll, pitch, yaw
 
     def timer_callback(self):
-        t = TransformStamped()
 
+        q = self.euler_to_quaternion(0, 0, self.yaw)
+
+
+        # Publish the transform
+        t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = 'my_odom'
         t.child_frame_id = 'base_link'
-
         t.transform.translation.x = self.x
         t.transform.translation.y = self.y
         t.transform.translation.z = 0.0
-
-        q = self.euler_to_quaternion(0, 0, self.yaw)
         t.transform.rotation.x = q[0]
         t.transform.rotation.y = q[1]
         t.transform.rotation.z = q[2]
         t.transform.rotation.w = q[3]
-
         self.br.sendTransform(t)
-        print("transform published")
+        print(f"Published transform: {t}")
+
+        # Publish the odometry message
+        odom_msg = Odometry()
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.frame_id = 'my_odom'
+        odom_msg.child_frame_id = 'base_link'
+        odom_msg.pose.pose.position.x = self.x
+        odom_msg.pose.pose.position.y = self.y
+        odom_msg.pose.pose.position.z = 0.0
+        odom_msg.pose.pose.orientation.x = q[0]
+        odom_msg.pose.pose.orientation.y = q[1]
+        odom_msg.pose.pose.orientation.z = q[2]
+        odom_msg.pose.pose.orientation.w = q[3]
+        self.odom_publisher.publish(odom_msg)
+        print(f"Published odometry: {odom_msg}")
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
