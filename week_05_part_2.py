@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 import os
 import math
 import numpy as np
@@ -19,7 +21,6 @@ FREE = 0
 class LidarSubscriber(Node):
     def __init__(self):
         super().__init__("lidar_subscriber")
-
         # create the empty matrix
         self.MATRIX_RES = 0.01
         self.MATRIX_WIDTH_m = 6
@@ -37,6 +38,37 @@ class LidarSubscriber(Node):
         # Initialize the static transform broadcaster
         # self.static_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
         # self.publish_static_transform()
+        # init the position to unknown
+        self.x = 0
+        self.y = 0
+        self.yaw = 0
+
+
+
+        self.odom_sub = self.create_subscription(Odometry, 'odom', self.odom_callback, 10)
+
+    def odom_callback(self, msg):
+        self.x = msg.pose.pose.position.x
+        self.y = msg.pose.pose.position.y
+        orientation = msg.pose.pose.orientation
+        _, _, self.yaw = self.quaternion_to_euler(orientation.x, orientation.y, orientation.z, orientation.w)
+        print(f"Received odom data: x={self.x:2.2f}, y={self.y:2.2f}, yaw={self.yaw:2.2f}")
+
+    def quaternion_to_euler(self, x, y, z, w):
+        t0 = +2.0 * (w * x + y * z)
+        t1 = +1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(t0, t1)
+
+        t2 = +2.0 * (w * y - z * x)
+        t2 = +1.0 if t2 > +1.0 else t2
+        t2 = -1.0 if t2 < -1.0 else t2
+        pitch = math.asin(t2)
+
+        t3 = +2.0 * (w * z + x * y)
+        t4 = +1.0 - 2.0 * (y * y + z * z)
+        yaw = math.atan2(t3, t4)
+
+        return roll, pitch, yaw
 
     def create_empty_matrix(self, rows, cols):
         return np.full((rows, cols), FREE)
@@ -60,7 +92,17 @@ class LidarSubscriber(Node):
         transform.transform.rotation.y = 0.0
         transform.transform.rotation.z = 0.0
         transform.transform.rotation.w = 1.0
-        self.static_broadcaster.sendTransform(transform)
+        # use the pose info from the odom
+        # transform.header.frame_id = "base_link"
+        # transform.child_frame_id = "odom"
+        # transform.transform.translation.x = self.x + self.MATRIX_WIDTH_m / 2
+        # transform.transform.translation.y = self.y + self.MATRIX_HEIGHT_m / 2
+        # transform.transform.translation.z = 0.0
+        # transform.transform.rotation.x = 0.0
+        # transform.transform.rotation.y = 0.0
+        # transform.transform.rotation.z = math.sin(self.yaw / 2)
+        # transform.transform.rotation.w = math.cos(self.yaw / 2)
+        # self.static_broadcaster.sendTransform(transform)
 
     def timer_callback(self):
         # when we do this, we need to look at the frame id "base_footprint" so the matrix moves with use
@@ -81,10 +123,11 @@ class LidarSubscriber(Node):
         msg.info.origin.orientation.w = 1.0
 
 
+
         aux_matrix = self.matrix.flatten()
         msg.data = aux_matrix.tolist()
         self.publisher_.publish(msg)
-        print("Published OccupancyGrid", "frame_id:", msg.header.frame_id, "stamp:", msg.header.stamp, "topic", self.publisher_.topic_name)
+        # print("Published OccupancyGrid", "frame_id:", msg.header.frame_id, "stamp:", msg.header.stamp, "topic", self.publisher_.topic_name)
         # clear the matrix
         self.matrix = self.create_empty_matrix(self.MATRIX_DIV_W, self.MATRIX_DIV_H)
 
