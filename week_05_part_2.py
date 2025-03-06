@@ -6,6 +6,8 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PointStamped
+from tf2_geometry_msgs import do_transform_point
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import Header
 import tf2_ros
@@ -19,9 +21,9 @@ class LidarSubscriber(Node):
         super().__init__("lidar_subscriber")
 
         # create the empty matrix
-        self.MATRIX_RES = 0.1
-        self.MATRIX_WIDTH_m = 15
-        self.MATRIX_HEIGHT_m = 10
+        self.MATRIX_RES = 0.01
+        self.MATRIX_WIDTH_m = 6
+        self.MATRIX_HEIGHT_m = 6
         self.MATRIX_DIV_W = int(self.MATRIX_WIDTH_m / self.MATRIX_RES)
         self.MATRIX_DIV_H = int(self.MATRIX_HEIGHT_m / self.MATRIX_RES)
         self.matrix = self.create_empty_matrix(self.MATRIX_DIV_W, self.MATRIX_DIV_H)
@@ -29,10 +31,12 @@ class LidarSubscriber(Node):
 
         self.publisher_ = self.create_publisher(OccupancyGrid, "/map_2", 10)
         self.timer = self.create_timer(2, self.timer_callback)
+        # subscribe to the lidar data
+        self.create_subscription(LaserScan, "/scan", self.lidar_callback, 10)
 
         # Initialize the static transform broadcaster
-        self.static_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
-        self.publish_static_transform()
+        # self.static_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
+        # self.publish_static_transform()
 
     def create_empty_matrix(self, rows, cols):
         return np.full((rows, cols), FREE)
@@ -81,7 +85,32 @@ class LidarSubscriber(Node):
         msg.data = aux_matrix.tolist()
         self.publisher_.publish(msg)
         print("Published OccupancyGrid", "frame_id:", msg.header.frame_id, "stamp:", msg.header.stamp, "topic", self.publisher_.topic_name)
+        # clear the matrix
+        self.matrix = self.create_empty_matrix(self.MATRIX_DIV_W, self.MATRIX_DIV_H)
 
+    def lidar_callback(self, msg):
+        # mark the cells as occupied
+        # need to take into account that we are in the middle of the matrix
+        # we need to take into account the angle of the lidar
+
+
+        data = np.array(msg.ranges)
+        all_xs = data * np.sin(msg.angle_min + np.arange(len(data)) * msg.angle_increment)
+        all_ys = data * np.cos(msg.angle_min + np.arange(len(data)) * msg.angle_increment)
+        # now we need to convert the xs and ys to the matrix in order to map them
+        for x, y in zip(all_xs, all_ys):
+            # check if the point is within the matrix
+            if math.isinf(x) or math.isinf(y):
+                continue
+            if math.isnan(x) or math.isnan(y):
+                continue
+            if x < -self.MATRIX_WIDTH_m / 2 or x > self.MATRIX_WIDTH_m / 2:
+                continue
+            # convert to matrix coordinates
+            x_matrix = int((x + self.MATRIX_WIDTH_m / 2) / self.MATRIX_RES)
+            y_matrix = int((y + self.MATRIX_HEIGHT_m / 2) / self.MATRIX_RES)
+            if x_matrix >= 0 and x_matrix < self.MATRIX_DIV_W and y_matrix >= 0 and y_matrix < self.MATRIX_DIV_H:
+                self.matrix[x_matrix, y_matrix] = OCCUPIED
 
 def main(args=None):
     print("main function")
