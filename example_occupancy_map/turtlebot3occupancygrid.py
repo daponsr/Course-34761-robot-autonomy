@@ -129,13 +129,13 @@ class Turtlebot3OccupancyGrid(Node):
         shape = (int(self.width * N), int(self.height * N))
         self.grid = self.prob_priori * np.ones(shape, dtype=float)
         # subscriber to receive laser messages
-        # self._scan_subscriber = self.create_subscription(
-        #     msg_type=LaserScan,
-        #     topic="/scan",
-        #     callback=self._scan_callback,
-        #     qos_profile=10,
-        # )
-        self._scan_subscriber = self.create_subscription(LaserScan, "/scan", self._scan_callback, 10)
+        self._scan_subscriber = self.create_subscription(
+            msg_type=LaserScan,
+            topic="/scan",
+            callback=self._scan_callback,
+            qos_profile=10,
+        )
+        # self._scan_subscriber = self.create_subscription(LaserScan, "/scan", self._scan_callback, 10)
         # publisher to send probability map
         self._map_publisher = self.create_publisher(
             msg_type=OccupancyGrid,
@@ -195,6 +195,7 @@ class Turtlebot3OccupancyGrid(Node):
             message with laser scan received from robot.
         """
         print("update_map")
+        print("message_laser.header.frame_id", message_laser.header.frame_id)
         if not self._update.locked():
             self._update.acquire()
             try:
