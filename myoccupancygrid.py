@@ -97,7 +97,7 @@ def occupancy_grid_to_numpy(msg):
     return data
 
 class MyOccupancyGrid(Node):
-    def __init__(self):
+    def __init__(self, what_function_to_call_on_scan):
         super().__init__('my_occupancy_grid')
         # initilize so we do not publish the map before the first scan
         self.scan_has_been_received = False
@@ -116,6 +116,7 @@ class MyOccupancyGrid(Node):
         M = int(self.height / self.resolution)
         shape = (N, M)
         self.grid = np.ones(shape) * self.prob_priori
+        self.counter_grid = np.zeros(shape, dtype=int)  # Initialize the counter grid
         
         # subcription to the laser scan        
         self.laser_subscription = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
@@ -124,7 +125,7 @@ class MyOccupancyGrid(Node):
         self.publisher_map = self.create_publisher(OccupancyGrid, '/map_2', 10)
         self.publisher_map
         # timer to publish and update the map
-        self.timer = self.create_timer(2, self.timer_callback)
+        self.timer = self.create_timer(1, self.timer_callback)
 
         # set up the transform buffer
         self._tf_buffer = Buffer()                                          # set the transform buffer
@@ -140,10 +141,22 @@ class MyOccupancyGrid(Node):
         tf.transform.translation.z = 0.0
         self._tf_publisher.sendTransform(tf)
 
+        self.what_function_to_call_on_scan = what_function_to_call_on_scan
+
     def scan_callback(self, msg):
-        self.update_map(msg)
+        if(self.what_function_to_call_on_scan == "update_map"):
+            self.update_map(msg)
+            return
+        
+        if(self.what_function_to_call_on_scan == "update_map_with_counter"):
+            self.update_map_with_counter(msg)
+            return
+
+        print("what_function_to_call_on_scan is not set to a valid value")
+        exit()
 
     def update_map(self, msg):
+        print("update_map")
         self.scan_has_been_received = True
         self.get_logger().info("Updated occupancy grid...")
         # transform between the laser scan and the odom frame
@@ -183,10 +196,93 @@ class MyOccupancyGrid(Node):
             else:
                 self.update_cell(x=x, y=y, state=State.FREE)
         self.get_logger().info("Updated occupancy grid...")
-
+    def update_map_2(self, pose):
+        self.scan_has_been_received = True
+        self.get_logger().info("Updated occupancy grid with odometry data...")
+        
+        # Extract position and orientation from the pose
+        position = pose.position
+        orientation = pose.orientation
+        
+        # Convert orientation from quaternion to Euler angles
+        _, _, yaw = euler_from_quaternion(orientation)
+        if yaw < 0:
+            yaw += 2 * np.pi
+        
+        # Convert the position to grid coordinates
+        x = int((position.x + self.width // 2) / self.resolution)
+        y = int((position.y + self.height // 2) / self.resolution)
+        
+        # Update the occupancy grid based on the current position
+        self.update_cell(x=x, y=y, state=State.OCCUPIED)
+        self.update_cell(x=x - 1, y=y, state=State.OCCUPIED)
+        self.update_cell(x=x + 1, y=y, state=State.OCCUPIED)
+        self.update_cell(x=x, y=y + 1, state=State.OCCUPIED)
+        self.update_cell(x=x, y=y - 1, state=State.OCCUPIED)
+        
+        self.get_logger().info(f"Updated map with position: {position} and orientation: {orientation}")
     def timer_callback(self):
         if(self.scan_has_been_received):
             self.publisher_map.publish(self.my_occupancy_grid)
+
+    def update_map_with_counter(self, msg):
+        print("update_map_with_counter")
+        self.scan_has_been_received = True
+        self.get_logger().info("Updated occupancy grid...")
+        # transform between the laser scan and the odom frame
+        try:
+            tf = self._tf_buffer.lookup_transform('odom', msg.header.frame_id, msg.header.stamp)
+        except Exception as e:
+            self.get_logger().error('Could not transform between odom and %s: %s' % (msg.header.frame_id, str(e)))
+            return
+        _, _, yaw = euler_from_quaternion(tf.transform.rotation)
+        if yaw < 0:
+            yaw += 2 * np.pi
+        # convert the laser scan to polar coordinates
+        polar = laser_scan_to_polar(msg)
+        # we pass the tf.transform.translation.x and tf.transform.translation.y to the function polar_to_cartesian
+        # because those give use the position of the laser scan in the odom frame
+        # and we want the odom fraom
+        xy = polar_to_cartesian(polar, tf.transform.translation.x, tf.transform.translation.y, yaw)
+        xy[:, 0] = (xy[:, 0] + self.width // 2) / self.resolution
+        xy[:, 1] = (xy[:, 1] + self.height // 2) / self.resolution
+        xy = xy.astype(int)
+        xo = int((tf.transform.translation.x + self.width // 2) / self.resolution)
+        yo = int((tf.transform.translation.y + self.height // 2) / self.resolution)
+        for i in range(xy.shape[0]):
+            points = self.bresenham(x1=xo, y1=yo, x2=xy[i, 0], y2=xy[i, 1])
+            for j in range(points.shape[0] - 1):
+                x = points[j, 0]
+                y = points[j, 1]
+                self.update_cell_with_counter(x=x, y=y, state=State.FREE)
+            x = xy[i, 0]
+            y = xy[i, 1]
+            if polar[i, 0] < msg.range_max:
+                self.update_cell_with_counter(x=x, y=y, state=State.OCCUPIED)
+                self.update_cell_with_counter(x=x - 1, y=y, state=State.OCCUPIED)
+                self.update_cell_with_counter(x=x + 1, y=y, state=State.OCCUPIED)
+                self.update_cell_with_counter(x=x, y=y + 1, state=State.OCCUPIED)
+                self.update_cell_with_counter(x=x, y=y - 1, state=State.OCCUPIED)
+            else:
+                self.update_cell_with_counter(x=x, y=y, state=State.FREE)
+        self.get_logger().info("Updated occupancy grid...")
+
+    def update_cell_with_counter(self, x: int, y: int, state: State):
+        """Update the cell using a counter-based approach."""
+        if state == State.FREE:
+            self.counter_grid[x, y] -= 1
+        elif state == State.OCCUPIED:
+            self.counter_grid[x, y] += 1
+
+        # Clamp the counter value between 0 and 100
+        if self.counter_grid[x, y] < 0:
+            self.counter_grid[x, y] = 0
+        elif self.counter_grid[x, y] > 100:
+            self.counter_grid[x, y] = 100
+
+        # Update the occupancy probability based on the counter value
+        self.grid[x, y] = self.counter_grid[x, y]/100
+
 
     @property
     def my_occupancy_grid(self):

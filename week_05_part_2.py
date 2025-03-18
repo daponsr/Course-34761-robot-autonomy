@@ -3,7 +3,7 @@ from myoccupancygrid import MyOccupancyGrid
 
 def main():
     rclpy.init()
-    node = MyOccupancyGrid()
+    node = MyOccupancyGrid("update_map")
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
