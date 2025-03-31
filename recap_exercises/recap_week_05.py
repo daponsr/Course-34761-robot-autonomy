@@ -162,7 +162,9 @@ class MyOccupancyGrid(Node):
         self.scan_has_been_received = True
         self.get_logger().info("Updated occupancy grid...")
         # transform between the laser scan and the odom frame
+        
         try:
+            print("transofrm",'odom', msg.header.frame_id)
             tf = self._tf_buffer.lookup_transform('odom', msg.header.frame_id, msg.header.stamp)
         except Exception as e:
             self.get_logger().error('Could not transform between odom and %s: %s' % (msg.header.frame_id, str(e)))
