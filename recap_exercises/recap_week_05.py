@@ -27,6 +27,8 @@ from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Quaternion
+
+
 class State(Enum):
     FREE = 1
     OCCUPIED = 2
