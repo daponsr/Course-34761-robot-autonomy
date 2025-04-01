@@ -33,17 +33,14 @@ class State(Enum):
     UNKOWN = 3
 
 
-
-
-
 class MyOccupancyGrid(Node):
     def __init__(self):
         super().__init__('my_occupancy_grid')
         # initilize so we do not publish the map before the first scan
         self.scan_has_been_received = False
         # define the grid
-        self.width = 10
-        self.height = 10
+        self.width = 20
+        self.height = 20
         self.resolution = float(0.1)
         self.min_prob = float(0.1)
         self.max_prob = float(0.9)
@@ -55,14 +52,14 @@ class MyOccupancyGrid(Node):
         N = int(self.width / self.resolution)
         M = int(self.height / self.resolution)
         shape = (N, M)
-        self.grid = np.ones(shape)
+        self.grid = np.ones(shape) * (-1)
 
         # subscription to the lidar data
         self.subscription = self.create_subscription(LaserScan,'/scan',self.scan_callback,10)
         self.subscription
 
         # publisher for the map --> where we will publish the map (OccupancyGrid)
-        self.publisher = self.create_publisher(OccupancyGrid, '/map_2', 10)
+        self.publisher = self.create_publisher(OccupancyGrid, '/map_3', 10)
         self.publisher
 
         # transfor buffer
@@ -80,52 +77,50 @@ class MyOccupancyGrid(Node):
         tf.transform.translation.z = 0.0
         self.tf_broadcaster.sendTransform(tf)
 
-
     def scan_callback(self, msg):
         # get the current time
         current_time = self.get_clock().now()
-        # get the transform from "base_link" to "odom"
+        self.scan_has_been_received = True
+        self.get_logger().info("Updated occupancy grid...")
+        # transform between the laser scan and the odom frame
+        
         try:
             print("transofrm",'odom', msg.header.frame_id)
             transform = self.tf_buffer.lookup_transform('odom', msg.header.frame_id, msg.header.stamp)
         except Exception as e:
             self.get_logger().error('Could not transform between odom and %s: %s' % (msg.header.frame_id, str(e)))
             return
-
         _, _, yaw = self.euler_from_quaternion(transform.transform.rotation)
-
-
-        # convert to polar the msg
+        if yaw < 0:
+            yaw += 2 * np.pi
+        # convert the laser scan to polar coordinates
         polar = self.laser_scan_to_polar(msg)
-
-        # convert to cartesian
+        # we pass the transform.transform.translation.x and transform.transform.translation.y to the function polar_to_cartesian
+        # because those give use the position of the laser scan in the odom frame
+        # and we want the odom fraom
         xy = self.polar_to_cartesian(polar, transform.transform.translation.x, transform.transform.translation.y, yaw)
         xy[:, 0] = (xy[:, 0] + self.width // 2) / self.resolution
         xy[:, 1] = (xy[:, 1] + self.height // 2) / self.resolution
         xy = xy.astype(int)
         xo = int((transform.transform.translation.x + self.width // 2) / self.resolution)
         yo = int((transform.transform.translation.y + self.height // 2) / self.resolution)
-        
-        # here we use bresenham to update the grid
         for i in range(xy.shape[0]):
-            x = xy[i, 0]
-            y = xy[i, 1]
-            points= self.breseham(xo, yo, x, y)
+            points = self.bresenham(x1=xo, y1=yo, x2=xy[i, 0], y2=xy[i, 1])
             for j in range(points.shape[0] - 1):
                 x = points[j, 0]
                 y = points[j, 1]
-                self.update_grid(x, y, State.FREE)
+                self.update_cell(x=x, y=y, state=State.FREE)
             x = xy[i, 0]
             y = xy[i, 1]
             if polar[i, 0] < msg.range_max:
-                self.update_grid(x=x, y=y, state=State.OCCUPIED)
-                self.update_grid(x=x - 1, y=y, state=State.OCCUPIED)
-                self.update_grid(x=x + 1, y=y, state=State.OCCUPIED)
-                self.update_grid(x=x, y=y + 1, state=State.OCCUPIED)
-                self.update_grid(x=x, y=y - 1, state=State.OCCUPIED)
+                self.update_cell(x=x, y=y, state=State.OCCUPIED)
+            else:
+                self.update_cell(x=x, y=y, state=State.FREE)
+        self.get_logger().info("Updated occupancy grid...")
 
         # publish the map
         self.publish_map(current_time)
+        print("publish my grid")
 
     def euler_from_quaternion(self, quaternion: Quaternion):
         x = quaternion.x
@@ -145,42 +140,69 @@ class MyOccupancyGrid(Node):
         yaw = np.arctan2(siny_cosp, cosy_cosp)
 
         return roll, pitch, yaw
-
     
 
-    def update_grid(self, x: int, y: int, state: State):
-        if x >= 0 and x < self.grid.shape[0] and y >= 0 and y < self.grid.shape[1]:
-            if state == State.FREE:
-                self.grid[x, y] = self.prob_free
-            elif state == State.OCCUPIED:
-                self.grid[x, y] = self.prob_occupied
-            elif state == State.UNKOWN:
-                self.grid[x, y] = self.prob_priori
+    def update_cell(self, x: int, y: int, state: State):
+        if state == State.FREE:
+            log_prob = self.log_odd(probability=self.prob_free)
+        elif state == State.OCCUPIED:
+            log_prob = self.log_odd(probability=self.prob_occupied)
+        else:
+            log_prob = self.log_odd(probability=self.prob_priori)
+        current_prob = self.grid[x, y]
+        current_prob_log_odd = self.log_odd(probability=current_prob)
+        current_prob_log_odd += log_prob
+        new_prob = self.probability(log_odd=current_prob_log_odd)
+        if new_prob < self.min_prob:
+            new_prob = self.min_prob
+        elif new_prob > self.max_prob:
+            new_prob = self.max_prob
+        self.grid[x, y] = new_prob
 
-    def breseham(self, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        if x0 < x1:
-            sx = 1
-        else:
-            sx = -1
-        if y0 < y1:
-            sy = 1
-        else:
-            sy = -1
-        err = dx - dy
+    def log_odd(self, probability: float) -> float:
+        return np.log(probability / (1 - probability))
+    def probability(self, log_odd: float) -> float:
+        result = 1 - (1.0 / (1 + np.exp(log_odd)))
+        if np.isnan(result):
+            result = 0.0
+        return result
+
+    def bresenham(self, x1: int, y1: int, x2: int, y2: int) -> np.ndarray:
+        # setup initial conditions
+        dx = x2 - x1
+        dy = y2 - y1
+        # determine how steep the line is
+        is_steep = abs(dy) > abs(dx)
+        # rotate line
+        if is_steep:
+            x1, y1 = y1, x1
+            x2, y2 = y2, x2
+        # swap start and end points if necessary and store swap state
+        swapped = False
+        if x1 > x2:
+            x1, x2 = x2, x1
+            y1, y2 = y2, y1
+            swapped = True
+        # recalculate differentials
+        dx = x2 - x1
+        # recalculate differentials
+        dy = y2 - y1
+        # calculate error
+        error = int(dx / 2.0)
+        y_step = 1 if y1 < y2 else -1
+        # iterate over bounding box generating points between start and end
+        y = y1
         points = []
-        while True:
-            points.append([x0, y0])
-            if x0 == x1 and y0 == y1:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err = err - dy
-                x0 = x0 + sx
-            if e2 < dx:
-                err = err + dx
-                y0 = y0 + sy
+        for x in range(x1, x2 + 1):
+            coord = [y, x] if is_steep else (x, y)
+            points.append(coord)
+            error -= abs(dy)
+            if error < 0:
+                y += y_step
+                error += dx
+        # reverse the list if the coordinates were swapped
+        if swapped:
+            points.reverse()
         return np.array(points)
 
     
@@ -199,19 +221,13 @@ class MyOccupancyGrid(Node):
             array[i, 1] = angle
         return array
 
-    def polar_to_cartesian(self, polar: np.ndarray, x: float, y: float, yaw: float) -> np.ndarray:
-        cartesian = np.zeros(polar.shape)
-        for i in range(polar.shape[0]):
-            cartesian[i, 0] = polar[i, 0] * np.cos(polar[i, 1] + yaw) + x
-            cartesian[i, 1] = polar[i, 0] * np.sin(polar[i, 1] + yaw) + y
-        return cartesian
+    def polar_to_cartesian(self, coordinates: np.ndarray, x: float, y: float, theta: float) -> np.ndarray:
+        N = coordinates.shape[0]
+        array = np.zeros((N, 2))
+        array[:, 0] = x + coordinates[:, 0] * np.cos(coordinates[:, 1] + theta)
+        array[:, 1] = y + coordinates[:, 0] * np.sin(coordinates[:, 1] + theta)
+        return array
     
-    # def update_grid(self, points: np.ndarray):
-    #     for point in points:
-    #         x = int(point[0] / self.resolution)
-    #         y = int(point[1] / self.resolution)
-    #         if x >= 0 and x < self.grid.shape[0] and y >= 0 and y < self.grid.shape[1]:
-    #             self.grid[x, y] = self.prob_occupied
     def publish_map(self, current_time: Time):
         print("publishing map")
         resolution = self.resolution
@@ -226,12 +242,14 @@ class MyOccupancyGrid(Node):
         grid.info.height = self.grid.shape[1]
         grid.info.origin.position.x = float(world[0])
         grid.info.origin.position.y = float(world[1])
-        # grid data
-        data = []
-        for i in range(self.grid.shape[0]):
-            for j in range(self.grid.shape[1]):
-                data.append(int(100 * self.grid[i, j]))
-        grid.data = data
+
+
+        copy_grid = np.zeros_like(self.grid)
+        copy_grid[:, :] = self.grid[:, :] * 100
+        copy_grid = np.transpose(copy_grid)
+        copy_grid = copy_grid.astype("int8")
+        grid.data = copy_grid.ravel().tolist()
+
         print("publishing map")
         self.publisher.publish(grid)
         

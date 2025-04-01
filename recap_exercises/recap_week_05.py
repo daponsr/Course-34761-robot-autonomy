@@ -33,6 +33,7 @@ class State(Enum):
     FREE = 1
     OCCUPIED = 2
     UNKOWN = 3
+    
 def euler_from_quaternion(quaternion: Quaternion):
     x = quaternion.x
     y = quaternion.y
