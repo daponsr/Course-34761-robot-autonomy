@@ -220,13 +220,13 @@ class MyOccupancyGrid(Node):
             array[i, 0] = distance
             array[i, 1] = angle
         return array
-
-    def polar_to_cartesian(self, coordinates: np.ndarray, x: float, y: float, theta: float) -> np.ndarray:
-        N = coordinates.shape[0]
-        array = np.zeros((N, 2))
-        array[:, 0] = x + coordinates[:, 0] * np.cos(coordinates[:, 1] + theta)
-        array[:, 1] = y + coordinates[:, 0] * np.sin(coordinates[:, 1] + theta)
-        return array
+        
+    def polar_to_cartesian(self, polar: np.ndarray, x: float, y: float, yaw: float) -> np.ndarray:
+        cartesian = np.zeros(polar.shape)
+        for i in range(polar.shape[0]):
+            cartesian[i, 0] = polar[i, 0] * np.cos(polar[i, 1] + yaw) + x
+            cartesian[i, 1] = polar[i, 0] * np.sin(polar[i, 1] + yaw) + y
+        return cartesian
     
     def publish_map(self, current_time: Time):
         print("publishing map")
