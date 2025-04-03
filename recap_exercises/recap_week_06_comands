@@ -1,0 +1,19 @@
+
+
+# lanch the simulation
+ros2 launch my_turtlebot turtlebot_simulation.launch.py use_sim_time:=True
+
+# connect the map to the odom frames
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map odom
+
+# configure the Particle Filter, we can adjust the parameters using the GUI
+ros2 run rqt_reconfigure rqt_reconfigure
+
+# Questions:
+#  - why is the filter not update when we are not moving?
+#    are there parameters which determine how oftern/when filter
+#    should update the estimation?
+#     there is resampel interval
+#     it des not update when we are not moving because it depends 
+#     on the state, and it remains constant when at the same positio
+
